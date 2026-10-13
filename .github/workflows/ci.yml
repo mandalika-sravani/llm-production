@@ -1,0 +1,52 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write   # needed to push the image to GitHub Container Registry
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Lint
+        run: ruff check .
+      - name: Unit tests (mock LLM, no secrets needed)
+        run: pytest -q
+
+  build-and-smoke-test:
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t prod-llm-api:${{ github.sha }} .
+      - name: Smoke test the container
+        run: |
+          docker run -d --name api -p 8000:8000 \
+            -e LLM_PROVIDER=mock -e EMBEDDER=fake -e API_KEYS=ci-key \
+            prod-llm-api:${{ github.sha }}
+          for i in $(seq 1 30); do curl -sf localhost:8000/health && break; sleep 1; done
+          curl -sf -X POST localhost:8000/v1/chat \
+            -H "X-API-Key: ci-key" -H "Content-Type: application/json" \
+            -d '{"prompt":"hello"}'
+          docker logs api
+      - name: Push to GHCR (main branch only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          IMAGE=ghcr.io/$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          docker tag prod-llm-api:${{ github.sha }} $IMAGE:${{ github.sha }}
+          docker tag prod-llm-api:${{ github.sha }} $IMAGE:latest
+          docker push $IMAGE:${{ github.sha }}
+          docker push $IMAGE:latest

@@ -1,0 +1,29 @@
+# Alerts map to the SLOs in RUNBOOK.md. View them at http://localhost:9090/alerts
+groups:
+  - name: llm-api-slo
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(api_requests_total{endpoint="/v1/chat",status=~"5.."}[5m]))
+            / clamp_min(sum(rate(api_requests_total{endpoint="/v1/chat"}[5m])), 1e-9) > 0.01
+        for: 5m
+        labels: { severity: page }
+        annotations: { summary: "5xx error rate above 1% (availability SLO at risk)" }
+
+      - alert: HighLatencyP95
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(api_request_latency_seconds_bucket{endpoint="/v1/chat"}[5m]))) > 5
+        for: 10m
+        labels: { severity: warn }
+        annotations: { summary: "p95 latency above 5s" }
+
+      - alert: CircuitBreakerOpen
+        expr: max(circuit_breaker_open) == 1
+        for: 1m
+        labels: { severity: page }
+        annotations: { summary: "LLM provider failing - serving fallback responses" }
+
+      - alert: CostSpike
+        expr: increase(llm_cost_usd_total[1h]) > 1
+        labels: { severity: warn }
+        annotations: { summary: "More than $1 of LLM spend in the last hour" }

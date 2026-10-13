@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: api
+    metrics_path: /metrics/
+    # DNS discovery finds ALL api replicas when you scale out
+    dns_sd_configs:
+      - names: [api]
+        type: A
+        port: 8000
